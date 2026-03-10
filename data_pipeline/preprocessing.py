@@ -1,7 +1,3 @@
-import numpy as np
-import pandas as pd
-
-
 def split_timeseries(df, train_size=0.7, val_size=0.15):
     n = len(df)
     train_end = int(n * train_size)
