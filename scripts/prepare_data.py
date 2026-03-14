@@ -2,7 +2,11 @@ import os
 
 import pandas as pd
 
-from data_pipeline.preprocessing import normalize_features, split_timeseries
+from data_pipeline.preprocessing import (
+    encode_cyclic,
+    normalize_features,
+    split_timeseries,
+)
 
 os.makedirs('data/splits', exist_ok=True)
 
@@ -10,6 +14,10 @@ df = pd.read_csv('data/processed/combined_data.csv', parse_dates=['time'])
 
 train, val, test = split_timeseries(df, train_size=0.7, val_size=0.15)
 train_norm, val_norm, test_norm, stats = normalize_features(train, val, test, ['sp', 't2m'])
+
+train_norm = encode_cyclic(train_norm)
+val_norm = encode_cyclic(val_norm)
+test_norm = encode_cyclic(test_norm)
 
 train_norm.to_csv('data/splits/train.csv', index=False)
 val_norm.to_csv('data/splits/val.csv', index=False)

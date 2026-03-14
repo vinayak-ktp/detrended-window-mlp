@@ -1,3 +1,6 @@
+import numpy as np
+
+
 def split_timeseries(df, train_size=0.7, val_size=0.15):
     n = len(df)
     train_end = int(n * train_size)
@@ -25,3 +28,18 @@ def normalize_features(train_df, val_df, test_df, to_normalize=None):
         stats[col] = {'mean': mean, 'std': std}
 
     return train_out, val_out, test_out, stats
+
+
+def encode_cyclic(df):
+    df = df.copy()
+    cyclic_specs = [
+        ("hour", 24),
+        ("month", 12),
+        ("dayofyear", 365)
+    ]
+
+    for col, period in cyclic_specs:
+        df[f"sin_{col}"] = np.sin(2 * np.pi * df[col] / period)
+        df[f"cos_{col}"] = np.cos(2 * np.pi * df[col] / period)
+
+    return df
