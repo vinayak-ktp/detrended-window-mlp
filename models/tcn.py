@@ -17,10 +17,10 @@ class TCNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, dilation, dropout=0.0):
         super().__init__()
         self.conv_layers = nn.Sequential(
-            CausalConv1d(in_channels, out_channels, kernel_size, dilation),
+            CasualConv1d(in_channels, out_channels, kernel_size, dilation),
             nn.ReLU(),
             nn.Dropout(dropout),
-            CausalConv1d(out_channels, out_channels, kernel_size, dilation),
+            CasualConv1d(out_channels, out_channels, kernel_size, dilation),
         )
         self.residual_proj = (
             nn.Conv1d(in_channels, out_channels, kernel_size=1)
@@ -41,13 +41,15 @@ class TCNModel(nn.Module):
         in_channels = n_features
         for i, out_channels in enumerate(num_channels):
             dilation = 2**i
-            layers.append(TCNBlock(in_channels, out_channels, kernel_size, dilation, dropout))
+            layers.append(
+                TCNBlock(in_channels, out_channels, kernel_size, dilation, dropout)
+            )
             in_channels = out_channels
-        self.tcn = nn.Sequential(*blocks)
+        self.tcn = nn.Sequential(*layers)
         self.fc = nn.Linear(num_channels[-1], forecast_len)
 
     def forward(self, x):
-        x = x.permute(0, 2, 1)
+        x = x.permute(0, 2, 1)      # (batch, n_features, seq_len)
         x = self.tcn(x)             # (batch, num_channels[-1], seq_len)
         x = x[:, :, -1]             # (batch, num_channels[-1])
         return self.fc(x)           # (batch, forecast_len)

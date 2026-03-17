@@ -16,5 +16,5 @@ class GRUModel(nn.Module):
 
     def forward(self, x):
         out, _ = self.gru(x)    # out: (batch_size, seq_len, hidden_size)
-        last = out[: -1 :]      # last hidden state: (batch_size, hidden_size)
+        last = out[:, -1, :]    # last hidden state: (batch_size, hidden_size)
         return self.fc(last)    # output: (batch_size, forecast_len)
