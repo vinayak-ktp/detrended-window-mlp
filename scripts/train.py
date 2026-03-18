@@ -21,8 +21,8 @@ args = parser.parse_args()
 SEQ_LEN = 48
 FORECAST_LEN = 1
 BATCH_SIZE = 32
-NUM_EPOCHS = 1
-PATIENCE = 2
+NUM_EPOCHS = 50
+PATIENCE = 10
 LR = 1e-3
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -54,7 +54,7 @@ TRAIN_PATH = "data/splits/train.csv"
 VAL_PATH = "data/splits/val.csv"
 TEST_PATH = "data/splits/test.csv"
 CHECKPOINT = f"checkpoints/{args.model}.pt"
-RESULTS_DIR = "results"
+RESULTS_DIR = "_results"
 
 os.makedirs("checkpoints", exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
