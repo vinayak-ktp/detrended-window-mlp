@@ -8,6 +8,7 @@ import torch.optim as optim
 
 from data_pipeline.dataloader import get_dataloader
 from evaluation.metrics import compute_metrics, get_predictions
+from models.dw_mlp import DetrendedWindowMLP
 from models.gru import GRUModel
 from models.lstm import LSTMModel
 from models.tcn import TCNModel
@@ -15,7 +16,8 @@ from models.transformer import TransformerModel
 from training.trainer import train
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, required=True, choices=['lstm', 'gru', 'tcn', 'transformer'])
+parser.add_argument('--model', type=str, required=True,
+                    choices=['lstm', 'gru', 'tcn', 'transformer', 'dw_mlp'])
 args = parser.parse_args()
 
 SEQ_LEN = 48
@@ -47,6 +49,10 @@ MODEL_CONFIGS = {
         'nhead': 4,
         'num_layers': 2,
         'dropout': 0.1,
+    },
+    'dw_mlp': {
+        'hidden_dims': [256, 128, 64],
+        'dropout': 0.2,
     },
 }
 
@@ -124,13 +130,24 @@ elif args.model == 'transformer':
         forecast_len=FORECAST_LEN,
         dropout=cfg['dropout'],
     ).to(DEVICE)
+elif args.model == 'dw_mlp':
+    model = DetrendedWindowMLP(
+        seq_len=SEQ_LEN,
+        n_features=9,
+        hidden_dims=cfg['hidden_dims'],
+        forecast_len=FORECAST_LEN,
+        dropout=cfg['dropout'],
+    ).to(DEVICE)
 
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=LR)
 
 history = train(
-    model, train_dl, val_dl,
-    criterion, optimizer,
+    model,
+    train_dl,
+    val_dl,
+    criterion,
+    optimizer,
     device=DEVICE,
     num_epochs=NUM_EPOCHS,
     save_path=CHECKPOINT,
