@@ -45,7 +45,7 @@ def train(model, train_dl, val_dl, criterion, optimizer, device, num_epochs, sav
 
         history["train_loss"].append(epoch_train_loss)
         history["val_loss"].append(epoch_val_loss)
-        print(f"epoch {epoch}/{num_epochs}   train={epoch_train_loss:.4}   val={epoch_val_loss:.4f}")
+        print(f"epoch {epoch}/{num_epochs}   train={epoch_train_loss:.4f}   val={epoch_val_loss:.4f}")
 
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
