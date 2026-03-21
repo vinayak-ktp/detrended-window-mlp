@@ -8,12 +8,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
 
 from data_pipeline.dataloader import get_dataloader
-from evaluation.metrics import compute_metrics, get_predictions
 from models.dw_mlp import DetrendedWindowMLP
 from models.gru import GRUModel
 from models.lstm import LSTMModel
 from models.tcn import TCNModel
 from models.transformer import TransformerModel
+from training.metrics import compute_metrics, get_predictions
 from training.trainer import train
 
 parser = argparse.ArgumentParser()

@@ -224,10 +224,7 @@ windspeed_prediction/
 │
 ├── training/
 │   ├── __init__.py
-│   └── trainer.py                 # train_one_epoch, evaluate, train
-│
-├── evaluation/
-│   ├── __init__.py
+│   ├── trainer.py                 # train_one_epoch, evaluate, train
 │   └── metrics.py                 # get_predictions, compute_metrics
 │
 ├── scripts/
