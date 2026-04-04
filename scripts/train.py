@@ -1,7 +1,9 @@
 import argparse
 import json
 import os
+import random
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,13 +22,21 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True,
                     choices=['lstm', 'gru', 'tcn', 'transformer', 'dw_mlp', 'all'])
 parser.add_argument('--exp', type=str, required=True)
+parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--data_frac', type=float, default=1.0)
+parser.add_argument('--seed', type=int, default=None)
 args = parser.parse_args()
+
+if args.seed is not None:
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
 SEQ_LEN = 48
 FORECAST_LEN = 1
 BATCH_SIZE = 32
-NUM_EPOCHS = 50
+NUM_EPOCHS = args.epochs
 PATIENCE = 7
 LR = 1e-3
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -54,7 +64,6 @@ MODEL_CONFIGS = {
         'dropout': 0.1,
     },
     'dw_mlp': {
-        # 'hidden_dims': [256, 128, 64],
         'hidden_dims': [64, 32],
         'dropout': 0.2,
     },
@@ -144,6 +153,16 @@ for model_name in models_to_run:
         print(f"  {k}: {v:.4f}")
 
     results = {
+        "hyperparams": {
+            "model": model_name,
+            "seq_len": SEQ_LEN,
+            "forecast_len": FORECAST_LEN,
+            "num_epochs": NUM_EPOCHS,
+            "patience": PATIENCE,
+            "lr": LR,
+            **({"seed": args.seed} if args.seed is not None else {}),
+            **cfg,
+        },
         "history": history,
         "metrics": {k: float(v) for k, v in metrics.items()},
         "predictions": preds_plot.tolist(),
