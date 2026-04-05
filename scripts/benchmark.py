@@ -38,6 +38,8 @@ PATIENCE = 7
 LR = 1e-3
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+print(f"Training on {str(DEVICE).upper()}")
+
 MODEL_CONFIGS = {
     'lstm': {
         'hidden_dim': 64,
@@ -50,7 +52,7 @@ MODEL_CONFIGS = {
         'dropout': 0.0,
     },
     'tcn': {
-        'num_channels': [32, 64, 64],
+        'num_channels': [32, 64],
         'kernel_size': 3,
         'dropout': 0.2,
     },
@@ -62,7 +64,7 @@ MODEL_CONFIGS = {
     },
     'dw_mlp': {
         'hidden_dims': [16, 8],
-        'dropout': 0.0,
+        'dropout': 0.1,
     },
 }
 
