@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True,
                     choices=['lstm', 'gru', 'tcn', 'transformer', 'dw_mlp', 'all'])
 parser.add_argument('--exp', type=str, required=True)
-parser.add_argument('--epochs', type=int, default=50)
+parser.add_argument('--epochs', type=int, default=60)
 parser.add_argument('--data_frac', type=float, default=1.0)
 parser.add_argument('--seed', type=int, default=None)
 args = parser.parse_args()
@@ -40,6 +40,8 @@ NUM_EPOCHS = args.epochs
 PATIENCE = 7
 LR = 1e-3
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+print(f"Training on {str(DEVICE).upper()}")
 
 MODEL_CONFIGS = {
     'lstm': {
