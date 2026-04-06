@@ -2,7 +2,7 @@
 
 A comparison of five time-series models for hourly wind speed forecasting, with a focus on the **Detrended Window MLP (DW-MLP)** — a lightweight model that explicitly decomposes each input window into a local linear trend and a stationary residual before prediction.
 
-The central finding is that DW-MLP achieves the best data efficiency among all tested models, degrading by only **+30.2% in MAE** when trained on 25% of the data, compared to +110.6% for LSTM and +160.0% for Transformer — while also having the **fewest parameters (30,977)** and the **smallest checkpoint (124 kB)**.
+Benchmarked across **10 random seeds** to produce statistically reliable comparisons, the results show that LSTM and GRU are the strongest overall performers. DW-MLP's contribution is not raw accuracy — it is **parameter efficiency and training stability**: DW-MLP achieves competitive MAPE (27.7%) with only **7,361 parameters** and a **31.4 kB checkpoint**, making it the smallest model by a large margin.
 
 ---
 
@@ -11,6 +11,7 @@ The central finding is that DW-MLP achieves the best data efficiency among all t
 - [Dataset](#dataset)
 - [Models](#models)
 - [DW-MLP — How It Works](#dw-mlp--how-it-works)
+- [Benchmarking](#benchmarking)
 - [Results](#results)
 - [Project Structure](#project-structure)
 - [Setup](#setup)
@@ -47,17 +48,9 @@ Hourly meteorological observations for the year 2021 (8,760 samples, no missing 
 
 Five models are implemented and compared, all sharing the same input shape `(batch, 48, 9)` and output shape `(batch, 1)`.
 
-| Model       | Architecture                        | Parameters | Checkpoint   |
-| ----------- | ----------------------------------- | ---------- | ------------ |
-| LSTM        | 2-layer LSTM, hidden=64             | 52,545     | 208.6 kB     |
-| GRU         | 2-layer GRU, hidden=64              | 39,425     | 157.3 kB     |
-| TCN         | Channels [32,64,64], kernel=3       | 49,761     | 200.3 kB     |
-| Transformer | d_model=64, 4 heads, 2 layers       | 100,417    | 402.6 kB     |
-| **DW-MLP**  | **Hidden [64,32], detrended input** | **30,977** | **123.7 kB** |
-
 ### LSTM (`models/lstm.py`)
 
-Reads the sequence left to right, maintaining a hidden state and a cell state across timesteps. The final hidden state is passed through a linear layer to produce the forecast.
+Reads the sequence left to right, maintaining a hidden state and cell state across timesteps. The final hidden state is passed through a linear layer to produce the forecast.
 
 ### GRU (`models/gru.py`)
 
@@ -65,11 +58,11 @@ A simplified version of LSTM with a single gated state. Fewer parameters than LS
 
 ### TCN (`models/tcn.py`)
 
-A stack of causal dilated convolutional blocks with residual connections. Doubling dilation at each block (`[1, 2, 4]`) gives an exponentially growing receptive field without recurrence. The last timestep's representation is used for the forecast.
+A stack of causal dilated convolutional blocks with residual connections. Doubling dilation at each block gives an exponentially growing receptive field without recurrence. The last timestep's representation is used for the forecast.
 
 ### Transformer (`models/transformer.py`)
 
-Projects input features to `d_model=64`, adds sinusoidal positional encoding, then passes through a 2-layer Transformer Encoder. All timesteps attend to all others simultaneously. The last timestep's output is used for the forecast.
+Projects input features to `d_model=64`, adds sinusoidal positional encoding, then passes through a Transformer Encoder. All timesteps attend to all others simultaneously. The last timestep's output is used for the forecast.
 
 ### DW-MLP (`models/dw_mlp.py`)
 
@@ -79,31 +72,29 @@ Described in detail below.
 
 ## DW-MLP — How It Works
 
-Standard sequence models implicitly learn both the trend and the fluctuations of a time series from data. DW-MLP makes this decomposition **explicit and analytical**, so the model only has to learn the harder part — the residuals.
+Standard sequence models implicitly learn both the trend and the fluctuations of a time series from data. DW-MLP makes this decomposition **explicit and analytical**, so the model only needs to learn the harder part — the residuals.
 
 ### Decomposition
 
 For each input window of shape `(seq_len, n_features)`, a local linear trend is fit per feature using ordinary least squares:
 
 ```
-t = [0, 1, ..., seq_len-1]  (centered)
-
+t         = [0, 1, ..., seq_len-1]  (centered around mean)
 slope     = Σ(t_c * x_c) / Σ(t_c²)
 intercept = mean(x) - slope * mean(t)
 trend     = slope * t + intercept
 residual  = x - trend
 ```
 
-The trend is then **extrapolated** one step ahead to produce `trend_at_T` — the analytically predicted value at the forecast step.
+The trend is then **extrapolated** one step ahead to produce `trend_at_T` — the analytically predicted value at the forecast step. No parameters are learned for this step.
 
-### Prediction
+### Prediction and Reconstruction
 
 The MLP receives a concatenation of:
 
 - Flattened residuals: `(seq_len * n_features,)` = 432 values
 - Slopes: `(n_features,)` = 9 values
-- Intercepts: `(n_features,)` = 9 values
-- **Total input: 450 values**
+- Intercepts: `(n_features,)` = 9 values — **total input: 450 values**
 
 The MLP predicts the **residual** at the forecast step. The final output adds the extrapolated trend back:
 
@@ -111,85 +102,83 @@ The MLP predicts the **residual** at the forecast step. The final output adds th
 ŷ = MLP(residuals, slopes, intercepts) + trend_at_T
 ```
 
-### Why This Helps With Limited Data
-
-The trend is estimated analytically — no data-driven learning is needed for the low-frequency component of the signal. The MLP only has to learn residual patterns, which are more stationary and require less data to generalise from. This is the mechanism behind DW-MLP's data efficiency advantage.
+Passing slopes and intercepts alongside the residuals gives the MLP context about the local trend — two windows with identical residuals but different trends represent different physical situations.
 
 ### Architecture
 
 ```
 Input window x: (batch, 48, 9)
         │
-   detrend_batch()
+   detrend_batch() — OLS per feature, no learned params
         │
-   ┌────┴─────────────────┐
-residuals            slopes, intercepts
-(batch, 48, 9)       (batch, 9) each
-   │                      │
-flatten                   │
-(batch, 432)              │
-   └──────── cat ─────────┘
-              │
-       (batch, 450)
-              │
-       Linear(450→64) + ReLU + Dropout
-              │
-       Linear(64→32)  + ReLU + Dropout
-              │
-       Linear(32→1)
-              │
-       residual_pred + trend_at_T
-              │
-          ŷ: (batch, 1)
+   ┌────┴──────────────────────┐
+residuals                 slopes, intercepts
+(batch, 48, 9)            (batch, 9) each
+   │                           │
+flatten                        │
+(batch, 432)                   │
+   └──────────── cat ──────────┘
+                  │
+           (batch, 450)
+                  │
+           Linear(450 → h₁) + ReLU + Dropout
+                  │
+           Linear(h₁ → h₂)  + ReLU + Dropout
+                  │
+           Linear(h₂ → 1)
+                  │
+      + trend_at_T (extrapolated, index 0 = wds)
+                  │
+            ŷ: (batch, 1)
 ```
+
+---
+
+## Benchmarking
+
+All models were benchmarked across **10 random seeds** to produce stable mean and standard deviation estimates.
+
+| Model           | Architecture        |
+| --------------- | ------------------- |
+| **TCN**         | channels=`[32, 64]` |
+| **DW-MLP**      | hidden=`[16, 8]`    |
+| **LSTM**        | hidden=64, 1 layer  |
+| **GRU**         | hidden=64, 1 layer  |
+| **Transformer** | d_model=64, 1 layer |
+
+**Training protocol:** Adam optimiser, lr=1e-3, MSE loss, patience=7, max 60 epochs, batch size 32. The best validation checkpoint is restored before test evaluation.
 
 ---
 
 ## Results
 
-All models trained with: Adam optimiser, lr=1e-3, MSE loss, patience=7, max 50 epochs. Evaluated on the held-out test set (15% of data, chronologically last).
+| Model       | MAE         | ±std    | RMSE        | ±std    | MAPE (%)  | ±std     | Params    | Size        |
+| ----------- | ----------- | ------- | ----------- | ------- | --------- | -------- | --------- | ----------- |
+| LSTM        | 0.04086     | 0.00046 | 0.05451     | 0.00046 | 26.52     | 1.41     | 19,265    | 77.3 kB     |
+| **GRU**     | **0.04080** | 0.00084 | **0.05442** | 0.00080 | **26.04** | 1.84     | 14,465    | 58.5 kB     |
+| TCN         | 0.04394     | 0.00206 | 0.05784     | 0.00203 | 29.36     | 2.74     | 25,057    | 103.4 kB    |
+| Transformer | 0.04334     | 0.00237 | 0.05753     | 0.00319 | 28.20     | 1.92     | 66,945    | 267.9 kB    |
+| DW-MLP      | 0.04501     | 0.00153 | 0.06026     | 0.00213 | 27.67     | **0.83** | **7,361** | **31.4 kB** |
 
-### Full data (100% of training set)
+### Key observations
 
-| Model       | MAE     | RMSE    | MAPE   |
-| ----------- | ------- | ------- | ------ |
-| LSTM        | 0.04032 | 0.05411 | 24.16% |
-| GRU         | 0.04047 | 0.05433 | 24.79% |
-| TCN         | 0.04200 | 0.05611 | 26.04% |
-| Transformer | 0.04710 | 0.05993 | 31.86% |
-| DW-MLP      | 0.04333 | 0.05762 | 25.89% |
+**LSTM and GRU are the best overall performers.** Both achieve MAE ~0.041 and RMSE ~0.054 consistently across all 10 seeds. Their low variance (CV ~1–2%) makes them the most reliable models on this task.
 
-### Half data (50% of training set)
+**DW-MLP has the lowest MAPE variance of all models.** DW-MLP's MAPE standard deviation is the smallest (0.83%). Its predictions are the most consistent across random seeds — a property that matters in production systems where reliability is as important as average accuracy.
 
-| Model       | MAE         | RMSE        | MAPE       |
-| ----------- | ----------- | ----------- | ---------- |
-| LSTM        | 0.04217     | 0.05626     | 24.97%     |
-| GRU         | **0.04000** | **0.05354** | **24.21%** |
-| TCN         | 0.06899     | 0.08603     | 53.65%     |
-| Transformer | 0.04562     | 0.06115     | 26.51%     |
-| DW-MLP      | 0.04623     | 0.06188     | 28.29%     |
+**DW-MLP is the most parameter-efficient model.** With just 7,361 parameters and a 31.4 kB checkpoint — less than half the size of GRU — DW-MLP achieves competitive MAPE (27.7% vs GRU's 26.0%) at a fraction of the model footprint. The trend is handled analytically, so the learned component can be very shallow.
 
-### Quarter data (25% of training set)
+**TCN and Transformer are the least stable.** Both show coefficient of variation >4% on MAE across seeds, meaning their performance is sensitive to initialisation. This makes them harder to deploy reliably without extensive tuning.
 
-| Model       | MAE         | RMSE        | MAPE       |
-| ----------- | ----------- | ----------- | ---------- |
-| LSTM        | 0.08494     | 0.10343     | 66.76%     |
-| GRU         | 0.05505     | 0.07068     | 34.11%     |
-| TCN         | 0.06254     | 0.08045     | 38.33%     |
-| Transformer | 0.12246     | 0.14924     | 80.95%     |
-| **DW-MLP**  | **0.05643** | **0.07377** | **36.27%** |
+### Stability summary (Coefficient of Variation on MAE, 10 seeds)
 
-### MAE degradation: full → quarter
-
-| Model       | Degradation |
-| ----------- | ----------- |
-| Transformer | +160.0%     |
-| LSTM        | +110.6%     |
-| TCN         | +48.9%      |
-| GRU         | +36.0%      |
-| **DW-MLP**  | **+30.2%**  |
-
-DW-MLP degrades the least of all models under data scarcity, while also being the smallest model by parameter count and checkpoint size.
+| Model       | CV (%) |
+| ----------- | ------ |
+| LSTM        | 1.11   |
+| GRU         | 2.06   |
+| DW-MLP      | 3.41   |
+| TCN         | 4.69   |
+| Transformer | 5.46   |
 
 ---
 
@@ -212,7 +201,7 @@ windspeed_prediction/
 ├── data_pipeline/
 │   ├── __init__.py
 │   ├── dataloader.py               # WindDataset and get_dataloader()
-│   └── preprocessing.py            # split, normalise, cyclic encode
+│   └── preprocessing.py           # split, normalise, cyclic encode
 │
 ├── models/
 │   ├── __init__.py
@@ -220,7 +209,7 @@ windspeed_prediction/
 │   ├── gru.py
 │   ├── tcn.py
 │   ├── transformer.py
-│   └── dw_mlp.py                  # DetrendendWindowMLP + detrend_batch()
+│   └── dw_mlp.py                  # DetrendedWindowMLP + detrend_batch()
 │
 ├── training/
 │   ├── __init__.py
@@ -229,29 +218,48 @@ windspeed_prediction/
 │
 ├── scripts/
 │   ├── prepare_data.py            # run once to generate data/splits/
-│   ├── train.py                   # main training entry point
-│   └── plot_results.py            # generate all plots from saved results
+│   ├── train.py                   # single-run training entry point
+│   └── plot_results.py            # generate plots from saved results
 │
 ├── notebooks/
 │   └── eda.ipynb                  # exploratory data analysis
 │
-├── checkpoints/                   # saved model weights, organised by experiment
-│   ├── full/
-│   ├── half/
-│   └── quarter/
+├── checkpoints/                   # saved model weights per run and seed
+│   └── run/
+│       ├── lstm_seed0.pt
+│       └── ...
 │
 ├── _results/
-│   ├── raw/                       # per-model JSON results (metrics + history)
-│   │   ├── full/
-│   │   ├── half/
-│   │   └── quarter/
+│   ├── raw/                       # JSON results per model per run
+│   │   └── run/
+│   │       ├── lstm.json          # per_seed_metrics + aggregated stats
+│   │       ├── summary.json       # all models aggregated in one file
+│   │       └── ...
 │   └── plots/                     # generated plots
-│       ├── full/
-│       ├── half/
-│       └── quarter/
+│       └── run/
 │
+├── benchmark.py                   # multi-seed benchmarking entry point
 ├── requirements.txt
 └── README.md
+```
+
+### Result file format
+
+Each `{model}.json` under `_results/raw/{run}/` contains:
+
+```json
+{
+  "model": "dw_mlp",
+  "seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "hyperparameters": { "seq_len": 48, "hidden_dims": [16, 8], "..." },
+  "per_seed_metrics": [
+    { "MAE": 0.043, "MSE": 0.002, "RMSE": 0.058, "MAPE": 27.1 },
+    "..."
+  ],
+  "aggregated": {
+    "MAE": { "mean": 0.045, "std": 0.0015, "min": 0.042, "max": 0.048, "values": [...] }
+  }
+}
 ```
 
 ---
@@ -266,13 +274,13 @@ cd detrended-window-mlp
 
 # create and activate a virtual environment
 python -m venv venv
-source venv/bin/activate   # on Windows: venv\Scripts\activate
+source venv/bin/activate        # on Windows: venv\Scripts\activate
 
-# install dependencies
-pip install -r requirements.txt
+# install dependencies (hardware-specific)
+python install.py
 ```
 
-`requirements.txt`:
+`dependencies`:
 
 ```
 numpy
@@ -289,46 +297,52 @@ jupyter
 
 ### 1. Prepare data
 
-Merges raw files, splits chronologically, normalises, and encodes cyclic features:
-
 ```bash
 python -m scripts.prepare_data
 ```
 
 Output: `data/splits/train.csv`, `val.csv`, `test.csv`
 
-### 2. Train a single model
+### 2. Run benchmark (multi-seed)
+
+Train all models over 10 seeds and save aggregated results:
 
 ```bash
-# train one model on full data
-python -m scripts.train --model lstm --exp full
-
-# available models: lstm, gru, tcn, transformer, dw_mlp
-# --exp sets the subdirectory name under checkpoints/ and _results/raw/
+python -m benchmark --model all --exp run
 ```
 
-### 3. Train all models
+Train a single model:
 
 ```bash
-python -m scripts.train --model all --exp full
+python -m benchmark --model dw_mlp --exp run
 ```
 
-### 4. Train on a fraction of data
+With a custom number of seeds or specific seeds:
 
 ```bash
-python -m scripts.train --model all --exp quarter --data_frac 0.25
-python -m scripts.train --model all --exp half    --data_frac 0.5
+python -m benchmark --model all --exp run --n_seeds 5
+python -m benchmark --model all --exp run --seeds 0 1 2 3 4
 ```
 
-### 5. Generate plots
+On a fraction of training data:
+
+```bash
+python -m benchmark --model all --exp run_quarter --data_frac 0.25
+```
+
+### 3. Train a single model (single run, no multi-seed)
+
+```bash
+python -m scripts.train --model lstm --exp run
+```
+
+### 4. Generate plots
 
 ```bash
 python -m scripts.plot_results
 ```
 
-Reads all JSON files from `_results/raw/` and writes plots to `_results/plots/`.
-
-### 6. Exploratory data analysis
+### 5. Exploratory data analysis
 
 ```bash
 jupyter notebook notebooks/eda.ipynb
@@ -343,10 +357,19 @@ jupyter notebook notebooks/eda.ipynb
 | `seq_len`       | 48 (48-hour lookback) |
 | `forecast_len`  | 1 (1-hour ahead)      |
 | `batch_size`    | 32                    |
-| `num_epochs`    | 50                    |
+| `num_epochs`    | 60                    |
 | `patience`      | 7                     |
 | `learning_rate` | 1e-3                  |
 | Optimiser       | Adam                  |
 | Loss            | MSELoss               |
+| Seeds           | 0–9 (10 seeds)        |
 
-Per-model architecture configs are defined in `scripts/train.py` under `MODEL_CONFIGS`.
+### Per-model architecture configs
+
+| Model       | Configuration                              |
+| ----------- | ------------------------------------------ |
+| LSTM        | hidden=64, layers=1, dropout=0.0           |
+| GRU         | hidden=64, layers=1, dropout=0.0           |
+| TCN         | channels=[32,64], kernel=3, dropout=0.2    |
+| Transformer | d_model=64, nhead=4, layers=1, dropout=0.0 |
+| DW-MLP      | hidden=[16,8], dropout=0.1                 |
